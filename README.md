@@ -1,9 +1,9 @@
-🥊 Punch — Powering Loyalty for Local Businesses
+🏃 Stryde — Track & Field Performance Tracking
 
-Punch is a cross-platform mobile app that connects small businesses through a shared rewards network, allowing them to unite, reward customers, and grow together — without needing to build their own loyalty infrastructure.
+Stryde is a cross-platform mobile app for track and field athletes to track workouts, monitor performance, and analyze progress with AI-powered insights.
 
-✨ Think: earn points at your favorite local coffee shop, redeem them at the pizza place next door.
-🎯 It’s community-powered loyalty — built for small businesses, not tech giants.
+✨ Track your workouts, sync with Apple Watch, and get personalized coaching insights.
+🎯 Built for athletes who want to improve their performance through data-driven training.
 
 ⸻
 
