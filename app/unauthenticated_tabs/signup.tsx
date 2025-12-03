@@ -1,0 +1,979 @@
+import { useRouter } from 'expo-router';
+import { createUserWithEmailAndPassword, signInWithEmailAndPassword, fetchSignInMethodsForEmail } from 'firebase/auth';
+import { useRef, useState, useEffect } from 'react';
+import { Animated, Easing, KeyboardAvoidingView, Platform, TouchableWithoutFeedback, View, Dimensions, Keyboard, KeyboardEvent, Linking } from 'react-native';
+import * as Haptics from 'expo-haptics';
+import * as ImagePicker from 'expo-image-picker';
+
+import { auth, db } from '../../firebase/config';
+import { setDoc, doc, query, collection, where, getDocs, Timestamp } from 'firebase/firestore';
+import { pickProfilePicture, uploadProfilePicture } from '../../utils/profilePictureUtils';
+import { sanitizeImageUri } from '../../utils/urlUtils';
+import SignupForm from '../components/SignupForm';
+import SignupNavigation from '../components/SignupNavigation';
+import SignupBackground from '../components/SignupBackground';
+import CustomText from '../../components/CustomText';
+import loginStyles from '../styles/loginStyles';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { storage } from '../../firebase/config';
+
+export default function SignupScreen() {
+  const router = useRouter();
+  const [step, setStep] = useState<number>(0);
+  const [isBusiness] = useState<boolean>(false); // Track athletes only, no business accounts
+  const [form, setForm] = useState({ 
+    name: '', 
+    email: '', 
+    phone: '', 
+    password: '',
+    businessName: '',
+    cuisine: [] as string[],
+    customCuisine: '',
+    pricing: '',
+    address: '',
+    placeId: '',
+    latitude: null as number | null,
+    longitude: null as number | null,
+    hours: {
+      monday: { isOpen: true, slots: [{ open: '9:00 AM', close: '5:00 PM' }] },
+      tuesday: { isOpen: true, slots: [{ open: '9:00 AM', close: '5:00 PM' }] },
+      wednesday: { isOpen: true, slots: [{ open: '9:00 AM', close: '5:00 PM' }] },
+      thursday: { isOpen: true, slots: [{ open: '9:00 AM', close: '5:00 PM' }] },
+      friday: { isOpen: true, slots: [{ open: '9:00 AM', close: '5:00 PM' }] },
+      saturday: { isOpen: true, slots: [{ open: '9:00 AM', close: '5:00 PM' }] },
+      sunday: { isOpen: true, slots: [{ open: '9:00 AM', close: '5:00 PM' }] },
+    },
+    logo: null as string | null,
+    businessPictures: [] as string[],
+  });
+  const [mode, setMode] = useState<'email' | 'phone'>('email');
+  
+  // Debug mode changes
+  useEffect(() => {
+    console.log('Mode changed to:', mode);
+  }, [mode]);
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [agree, setAgree] = useState(false);
+  const [notifEmail, setNotifEmail] = useState(true);
+  const [notifText, setNotifText] = useState(false);
+  const [uploadingPicture, setUploadingPicture] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [isKeyboardDismissing, setIsKeyboardDismissing] = useState(false);
+  const [showMoreCuisine, setShowMoreCuisine] = useState(false);
+  const [isValidating, setIsValidating] = useState(false);
+  const [phoneExists, setPhoneExists] = useState(false);
+  const [showLoadingScreen, setShowLoadingScreen] = useState(false);
+  const [loadingMessage, setLoadingMessage] = useState('');
+
+
+  const { width, height } = Dimensions.get('window');
+
+  // Safety check for dimensions
+  const safeHeight = height && !isNaN(height) && isFinite(height) ? height : 800;
+  const safeWidth = width && !isNaN(width) && isFinite(width) ? width : 400;
+  
+  const MODAL_HEIGHT = 420;
+  const modalAnim = useRef(new Animated.Value(MODAL_HEIGHT + 80)).current;
+  
+  // Entrance animations for fly-in effects
+  const orangeBackgroundAnim = useRef(new Animated.Value(200)).current;
+  const welcomeModalAnim = useRef(new Animated.Value(300)).current;
+  const logoSizeAnim = useRef(new Animated.Value(1)).current;
+  const pulsateAnim = useRef(new Animated.Value(1)).current;
+  
+  // Ensure all animation values are valid numbers
+  useEffect(() => {
+    // Reset any potentially corrupted animation values
+    orangeBackgroundAnim.setValue(200);
+    welcomeModalAnim.setValue(300);
+    logoSizeAnim.setValue(1);
+    pulsateAnim.setValue(1);
+  }, []);
+
+  // Loading messages for the loading screen
+  const loadingMessages = [
+    "Lacing up your spikes… 🏃",
+    "Setting up your starting blocks…",
+    "Preparing your track…",
+    "Getting ready to run…",
+    "Loading your performance data…",
+    "Warming up for your best time…"
+  ];
+
+
+
+  // Cuisine options
+  const cuisineOptions = [
+    'American', 'Bar', 'BBQ', 'Bakery', 'Breakfast', 'Brunch', 'Burgers', 'Cafe',
+    'Chinese', 'Indian', 'Italian', 'Japanese', 'Korean', 'Mexican', 'Thai',
+    'Vegan', 'Vegetarian', 'Mediterranean', 'Middle Eastern', 'French', 'Greek',
+    'Spanish', 'Vietnamese', 'Korean BBQ', 'Sushi', 'Pizza', 'Steakhouse',
+    'Seafood', 'Deli', 'Food Truck', 'Fine Dining', 'Fast Food', 'Dessert',
+    'Coffee Shop', 'Tea House', 'Wine Bar', 'Cocktail Bar', 'Brewery'
+  ];
+
+  // Step definitions
+  const businessSteps = [
+    { key: 'contact', prompt: "How can we reach you?", icon: 'mail' },
+    { key: 'password', prompt: "Create a password", icon: 'lock' },
+    { key: 'name', prompt: "What's your name?", placeholder: 'Your full name', icon: 'user' },
+    { key: 'businessName', prompt: "What's your business name?", placeholder: 'Sushi Town', icon: 'home' },
+    { key: 'cuisine', prompt: "What type of cuisine do you serve?", icon: 'tag' },
+    { key: 'pricing', prompt: "What's your average price per person?", placeholder: '50 or 50$', icon: 'tag' },
+    { key: 'address', prompt: "Where is your business located?", placeholder: '123 Main St, San Francisco, CA', icon: 'enviroment' },
+    { key: 'hours', prompt: "What are your operating hours?", icon: 'clockcircle' },
+    { key: 'logo', prompt: "Upload your business logo", icon: 'picture' },
+    { key: 'businessPictures', prompt: "Add photos of your business", icon: 'picture' },
+  ];
+
+  const personalSteps = [
+    { key: 'contact', prompt: "How can we reach you?", icon: 'mail' },
+    { key: 'password', prompt: "Create a password", icon: 'lock' },
+    { key: 'name', prompt: "What's your name?", placeholder: 'Your full name', icon: 'user' },
+  ];
+
+  const getCurrentSteps = () => {
+    return personalSteps; // Only personal steps for track athletes
+  };
+
+  const steps = getCurrentSteps();
+  console.log('Steps array:', steps);
+  console.log('Current step:', step);
+
+  function formatPhoneNumber(value: string) {
+    const digits = value.replace(/\D/g, '').slice(0, 10);
+    const parts = [];
+    if (digits.length > 0) parts.push(digits.slice(0, 3));
+    if (digits.length > 3) parts.push(digits.slice(3, 6));
+    if (digits.length > 6) parts.push(digits.slice(6, 10));
+    return parts.join('-');
+  }
+
+  function getFriendlyErrorMessage(errorCode: string) {
+    switch (errorCode) {
+      case 'auth/email-already-in-use':
+        return 'This email is already in use. Please try logging in.';
+      case 'auth/invalid-email':
+        return 'The email address is not valid.';
+      case 'auth/weak-password':
+        return 'Password should be at least 6 characters.';
+      default:
+        return 'Something went wrong. Please try again.';
+    }
+  }
+
+  // Start the loading sequence after email/password entry
+  const startLoadingSequence = () => {
+    const randomLoadingMessage = loadingMessages[Math.floor(Math.random() * loadingMessages.length)];
+    setLoadingMessage(randomLoadingMessage);
+    setShowLoadingScreen(true);
+    
+    // Ensure pulsateAnim starts with a valid value
+    pulsateAnim.setValue(1);
+    
+    const pulsateAnimation = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulsateAnim, {
+          toValue: 1.4,
+          duration: 1000,
+          useNativeDriver: true,
+          easing: Easing.out(Easing.quad),
+        }),
+        Animated.timing(pulsateAnim, {
+          toValue: 1,
+          duration: 1000,
+          useNativeDriver: true,
+          easing: Easing.in(Easing.quad),
+        }),
+      ])
+    );
+    
+    pulsateAnimation.start();
+    
+    let hapticCounter = 0;
+    const hapticInterval = setInterval(() => {
+      hapticCounter++;
+      if (hapticCounter > 6) {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+      } else if (hapticCounter > 3) {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      } else {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      }
+    }, 200);
+    
+    setTimeout(() => {
+      pulsateAnimation.stop();
+      clearInterval(hapticInterval);
+      setShowLoadingScreen(false);
+        setStep(step + 1);
+    }, 3000);
+  };
+
+
+
+  // Check if phone already exists
+  const checkPhoneExists = async (phone: string) => {
+    console.log('=== PHONE VALIDATION DEBUG ===');
+    console.log('Checking if phone exists:', phone);
+    
+    if (!phone || phone.length < 10) {
+      console.log('Phone too short, returning false');
+      return false;
+    }
+    
+    try {
+      const q = query(collection(db, 'users'), where('phone', '==', phone));
+      console.log('Phone query created:', q);
+      
+      const querySnapshot = await getDocs(q);
+      console.log('Phone query result - docs found:', querySnapshot.size);
+      
+      const result = !querySnapshot.empty;
+      console.log('Phone exists result:', result);
+      console.log('=== END PHONE VALIDATION DEBUG ===');
+      return result;
+    } catch (error) {
+      console.error('Error checking phone:', error);
+      console.error('Phone validation error details:', error);
+      return false;
+    }
+  };
+
+  useEffect(() => {
+    Animated.spring(modalAnim, {
+      toValue: 0,
+      useNativeDriver: true,
+      friction: 7,
+      tension: 60,
+    }).start();
+
+    Animated.spring(orangeBackgroundAnim, {
+      toValue: 0,
+      useNativeDriver: true,
+      friction: 8,
+      tension: 50,
+    }).start();
+
+    Animated.spring(welcomeModalAnim, {
+      toValue: 0,
+      useNativeDriver: true,
+      friction: 8,
+      tension: 50,
+    }).start();
+  }, []);
+
+
+
+  // Validate phone when it changes
+  useEffect(() => {
+    console.log('Phone validation useEffect - mode:', mode, 'phone:', form.phone);
+    if (mode === 'phone' && form.phone) {
+      const validatePhone = async () => {
+        console.log('Validating phone:', form.phone);
+        setIsValidating(true);
+        const exists = await checkPhoneExists(form.phone);
+        console.log('Phone validation result:', exists);
+        setPhoneExists(exists);
+        setIsValidating(false);
+      };
+      
+      const timeoutId = setTimeout(validatePhone, 300);
+      return () => clearTimeout(timeoutId);
+    } else if (mode === 'phone' && !form.phone) {
+      // Reset validation state when phone is cleared
+      setPhoneExists(false);
+      setIsValidating(false);
+    }
+  }, [form.phone, mode]);
+
+  useEffect(() => {
+    const handleKeyboardShow = (e: KeyboardEvent) => {
+      setIsKeyboardDismissing(false);
+      const keyboardHeight = e.endCoordinates.height;
+      
+      // Safety check to ensure keyboardHeight is a valid number
+      if (keyboardHeight && !isNaN(keyboardHeight) && isFinite(keyboardHeight)) {
+        const modalOffset = -keyboardHeight * 0.35;
+        const backgroundOffset = -keyboardHeight * 0.005;
+        
+        // Only animate if we have valid calculated values
+        if (!isNaN(modalOffset) && isFinite(modalOffset)) {
+      Animated.timing(modalAnim, {
+            toValue: modalOffset,
+            duration: 400,
+        useNativeDriver: true,
+        easing: Easing.out(Easing.cubic),
+      }).start();
+        }
+      
+        if (!isNaN(backgroundOffset) && isFinite(backgroundOffset)) {
+      Animated.timing(orangeBackgroundAnim, {
+            toValue: backgroundOffset,
+        duration: 400,
+        useNativeDriver: true,
+        easing: Easing.out(Easing.cubic),
+      }).start();
+        }
+      }
+      
+      // Logo animation is safe as it uses fixed values
+      Animated.timing(logoSizeAnim, {
+        toValue: 0.7,
+        duration: 300,
+        useNativeDriver: true,
+        easing: Easing.out(Easing.cubic),
+      }).start();
+    };
+
+    const handleKeyboardHide = () => {
+      if (!isKeyboardDismissing) {
+        Animated.timing(modalAnim, {
+          toValue: 0,
+          duration: 400,
+          useNativeDriver: true,
+          easing: Easing.out(Easing.cubic),
+        }).start();
+        
+        Animated.timing(orangeBackgroundAnim, {
+          toValue: 0,
+          duration: 400,
+          useNativeDriver: true,
+          easing: Easing.out(Easing.cubic),
+        }).start();
+        
+        Animated.timing(logoSizeAnim, {
+          toValue: 1,
+          duration: 300,
+          useNativeDriver: true,
+          easing: Easing.out(Easing.cubic),
+        }).start();
+      }
+    };
+
+    const showSub = Keyboard.addListener('keyboardDidShow', handleKeyboardShow);
+    const hideSub = Keyboard.addListener('keyboardDidHide', handleKeyboardHide);
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
+
+  const current = steps[step] || steps[steps.length - 1];
+
+
+  const handleLogoPick = async () => {
+    try {
+      setUploadingPicture(true);
+      setError('');
+      
+      const result = await pickProfilePicture();
+      
+      if (result && result.uri) {
+        setForm({ ...form, logo: result.uri });
+      }
+    } catch (error) {
+      console.error('Error picking logo:', error);
+      setError('Failed to pick logo. Please try again.');
+    } finally {
+      setUploadingPicture(false);
+    }
+  };
+
+  const handleBusinessPicturePick = async () => {
+    try {
+      setUploadingPicture(true);
+      setError('');
+      
+      // Use ImagePicker directly for business pictures to allow vertical photos
+      const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      
+      if (permissionResult.granted === false) {
+        setError('Permission denied for media library');
+        return;
+      }
+
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: false, // Don't force square aspect ratio
+        quality: 0.9, // Higher quality for business photos
+        allowsMultipleSelection: false,
+      });
+      
+      if (result && !result.canceled && result.assets && result.assets[0]) {
+        const asset = result.assets[0];
+        if (asset.uri) {
+          setForm(prev => ({ 
+            ...prev, 
+            businessPictures: [...(prev.businessPictures || []), asset.uri] 
+          }));
+        }
+      }
+    } catch (error) {
+      console.error('Error picking business picture:', error);
+      setError('Failed to pick business picture. Please try again.');
+    } finally {
+      setUploadingPicture(false);
+    }
+  };
+
+  const handleAccountTypeSelect = (business: boolean) => {
+    setIsBusiness(business);
+    setStep(0);
+  };
+
+  const handleNext = async () => {
+    console.log('handleNext called, current step:', step, 'current key:', steps[step]?.key);
+    setError('');
+    const current = steps[step];
+    
+    
+    if (current.key === 'contact') {
+      if (mode === 'email') {
+        if (!form.email || !/.+@.+\..+/.test(form.email)) {
+          setError('Please enter a valid email address.');
+          return;
+        }
+      } else if (mode === 'phone') {
+        if (!form.phone || form.phone.length < 10) {
+          setError('Please enter a valid phone number.');
+          return;
+        }
+        
+        // Wait for phone validation to complete
+        if (isValidating) {
+          setError('Please wait for phone validation to complete.');
+          return;
+        }
+        
+        if (phoneExists) {
+          setError('This phone number is already in use. Please choose a different one.');
+          return;
+        }
+      }
+      if (step < steps.length - 1) {
+        setStep(step + 1);
+      }
+      return;
+    }
+    
+    if (current.key === 'password') {
+      if (!form.password || form.password.length < 6) {
+        setError('Password should be at least 6 characters.');
+        return;
+      }
+      if (step < steps.length - 1) {
+        setStep(step + 1);
+      }
+      return;
+    }
+    
+    if (current.key === 'hours') {
+      // For hours step, just validate that at least one day is open
+      const hasOpenDays = Object.values(form.hours).some(day => day.isOpen);
+      if (!hasOpenDays) {
+        setError('Please set operating hours for at least one day.');
+        return;
+      }
+      if (step < steps.length - 1) {
+        setStep(step + 1);
+      }
+      return;
+    }
+    
+    if (current.key === 'name' || current.key === 'businessName') {
+      const value = form[current.key as keyof typeof form];
+      if (typeof value === 'string' && (!value || value.trim().length < 2)) {
+        setError(`Please enter your ${current.key === 'name' ? 'name' : 'business name'}.`);
+        return;
+      }
+    }
+    
+    // Only trigger signup on the final step, not when required fields are filled
+    console.log('Step validation - step:', step, 'total steps:', steps.length);
+    console.log('Form data:', { name: form.name, password: form.password, email: form.email, phone: form.phone });
+    
+    if (step === steps.length - 1) {
+      console.log('Final step reached, attempting signup...');
+      await handleSignup();
+    } else if (step < steps.length - 1) {
+      console.log('Advancing to next step...');
+      setStep(step + 1);
+    }
+  };
+
+  const handleBack = () => {
+    if (step === 0) {
+      Animated.timing(modalAnim, {
+        toValue: MODAL_HEIGHT + 80,
+        duration: 500,
+        useNativeDriver: true,
+        easing: Easing.inOut(Easing.cubic),
+      }).start(() => {
+        router.replace('/unauthenticated_tabs/onboarding?fromSignup=1');
+      });
+      return;
+    }
+    setError('');
+    setStep(step - 1);
+  };
+
+  const handleSignup = async () => {
+    setLoading(true);
+    setError('');
+    
+    try {
+      if (!form.password || !form.name) {
+        setError('Please fill in all required fields.');
+        setLoading(false);
+        return;
+      }
+      
+      if (mode === 'email' && (!form.email || !/.+@.+\..+/.test(form.email))) {
+        setError('Please enter a valid email address.');
+        setLoading(false);
+        return;
+      } else if (mode === 'phone' && (!form.phone || form.phone.length < 10)) {
+        setError('Please enter a valid phone number.');
+        setLoading(false);
+        return;
+      }
+      
+      // Double-check phone existence right before signup to avoid race conditions
+      if (mode === 'phone') {
+        console.log('Double-checking phone before signup:', form.phone);
+        const phoneStillExists = await checkPhoneExists(form.phone);
+        console.log('Phone still exists check result:', phoneStillExists);
+        if (phoneStillExists) {
+          setError('This phone number is already in use. Please choose a different one.');
+          setLoading(false);
+          return;
+        }
+      }
+      
+      if (isBusiness && (!form.businessName || !form.cuisine || !form.pricing || !form.address || !form.address.trim() || !form.hours)) {
+        setError('Please fill in all business information including a valid address.');
+        setLoading(false);
+        return;
+      }
+      
+      // Validate hours data for business users
+      if (isBusiness) {
+        const hasValidHours = Object.values(form.hours).some(day => day.isOpen && day.slots.length > 0);
+        if (!hasValidHours) {
+          setError('Please set operating hours for at least one day.');
+          setLoading(false);
+          return;
+        }
+        
+        // Validate time format (H:MM AM/PM)
+        const timeRegex = /^(1[0-2]|[1-9]):[0-5][0-9]\s?(AM|PM|am|pm)$/;
+        for (const day of Object.values(form.hours)) {
+          if (day.isOpen) {
+            for (const slot of day.slots) {
+              if (!timeRegex.test(slot.open) || !timeRegex.test(slot.close)) {
+                setError('Please enter valid time format (e.g., 9:00 AM, 5:00 PM) for operating hours.');
+                setLoading(false);
+                return;
+              }
+            }
+          }
+        }
+      }
+      
+      let user;
+      
+      if (mode === 'email') {
+        const userCredential = await createUserWithEmailAndPassword(auth, form.email, form.password);
+        user = userCredential.user;
+      } else if (mode === 'phone') {
+        const phoneEmail = `${form.phone}@phone.stryde.com`;
+        const userCredential = await createUserWithEmailAndPassword(auth, phoneEmail, form.password);
+        user = userCredential.user;
+      }
+      
+      if (!user) {
+        setError('Failed to create user account.');
+        setLoading(false);
+        return;
+      }
+      
+      let profilePictureUrl = '';
+      
+      let logoUrl = '';
+      if (isBusiness && form.logo) {
+        try {
+          logoUrl = await uploadProfilePicture(user.uid, form.logo) || '';
+        } catch (error) {
+          console.error('Error uploading logo:', error);
+        }
+      }
+      
+      // Upload business pictures to Firebase Storage
+      let businessPictureUrls: string[] = [];
+      if (isBusiness && form.businessPictures && form.businessPictures.length > 0) {
+        try {
+          console.log('Uploading business pictures to Firebase Storage...');
+          console.log('Number of pictures to upload:', form.businessPictures.length);
+          
+          const uploadPromises = form.businessPictures.map(async (pictureUri: string, index: number) => {
+            try {
+              console.log(`Processing photo ${index + 1}:`, pictureUri);
+              
+              // Create a reference to business-content/{RestaurantName}/photo_{index}.jpg
+              const fileName = `photo_${index + 1}.jpg`;
+              const storageRef = ref(storage, `business-content/${form.businessName}/${fileName}`);
+              
+              // Sanitize the image URI to ensure it's secure
+              const secureUri = sanitizeImageUri(pictureUri);
+              if (!secureUri) {
+                console.error('Invalid or insecure image URI:', pictureUri);
+                throw new Error(`Invalid or insecure image URI: ${pictureUri}`);
+              }
+              
+              // Convert URI to blob
+              const response = await fetch(secureUri);
+              const blob = await response.blob();
+              
+              console.log(`Photo ${index + 1} blob size:`, blob.size, 'bytes');
+              
+              // Upload to Firebase Storage with optimized settings
+              const uploadResult = await uploadBytes(storageRef, blob, {
+                contentType: 'image/jpeg',
+                cacheControl: 'public, max-age=31536000', // Cache for 1 year
+                customMetadata: {
+                  'restaurant-name': form.businessName,
+                  'photo-index': (index + 1).toString(),
+                  'upload-timestamp': new Date().toISOString()
+                }
+              });
+              
+              const downloadURL = await getDownloadURL(uploadResult.ref);
+              console.log(`Successfully uploaded photo ${index + 1}:`, downloadURL);
+              return downloadURL;
+            } catch (error) {
+              console.error(`Error uploading photo ${index + 1}:`, error);
+              return null;
+            }
+          });
+          
+          const uploadedUrls = await Promise.all(uploadPromises);
+          businessPictureUrls = uploadedUrls.filter(url => url !== null) as string[];
+          console.log('Successfully uploaded business pictures:', businessPictureUrls);
+          console.log('Total URLs collected:', businessPictureUrls.length);
+        } catch (error) {
+          console.error('Error uploading business pictures:', error);
+        }
+      }
+      
+      if (isBusiness) {
+        // Save only user profile data to users collection
+        await setDoc(doc(db, 'users', user.uid), {
+          uid: user.uid,
+          name: form.name,
+          contactMethod: mode,
+          email: mode === 'email' ? form.email : null,
+          phone: mode === 'phone' ? form.phone : null,
+          bio: '',
+          profilePictureUrl: profilePictureUrl,
+          isBusiness: true,
+          storesVisitedCount: 0,
+          storesVisitedHistory: [],
+          rewardsRedeemed: [],
+          followersCount: 0,
+          followingCount: 0,
+          followerUids: [],
+          followingUids: [],
+          emailNotifications: notifEmail,
+          textNotifications: notifText,
+        });
+        
+        // Save business data to restaurants collection
+        const restaurantData = {
+          id: user.uid,
+          name: form.businessName,
+          cuisine: form.cuisine,
+          cuisines: form.cuisine,
+          type: form.cuisine,
+          types: form.cuisine,
+          price: form.pricing,
+          hours: form.hours,
+          logoUrl: logoUrl,
+          businessPictures: businessPictureUrls,
+          images: businessPictureUrls, // Add images field for explore page
+          location: form.address,
+          address: form.address, // Keep for backward compatibility
+          isBusiness: true,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          // Add fields that explore page expects
+          latitude: form.latitude, // Use latitude from form
+          longitude: form.longitude, // Use longitude from form
+          activeRewards: [], // Empty array for now
+          distance: '0.5 mi', // Default distance
+          
+          // ===== RESTAURANT METRICS & ANALYTICS =====
+          // Core Engagement Metrics
+          totalViews: 0,
+          totalLikes: 0,
+          totalShares: 0, // To be implemented for restaurant modal
+          
+          // Weekly & Monthly Tracking
+          weeklyViews: 0,
+          monthlyViews: 0,
+          weeklyLikes: 0,
+          monthlyLikes: 0,
+          
+          // User Lists
+          likedByUsers: [], // Array of user IDs who liked this restaurant
+          
+          // Search Metrics
+          searchImpressions: 0, // How many times shown in search
+          searchClicks: 0, // How many times clicked from search
+          
+          // Screen-Specific Interaction Metrics
+          modalViews: 0, // RestaurantModal views
+          mapInteractions: 0, // Full-map interactions
+          walletInteractions: 0, // Wallet screen interactions
+          profileInteractions: 0, // Profile screen interactions
+          
+          // Timestamps for Analytics
+          firstViewDate: null,
+          lastViewDate: null,
+          firstLikeDate: null,
+          lastLikeDate: null,
+          lastShareDate: null,
+        };
+        
+        console.log('Saving restaurant data:', restaurantData);
+        console.log('Address being saved:', form.address);
+        console.log('Location field being saved:', form.address);
+        await setDoc(doc(db, 'restaurants', user.uid), restaurantData);
+        console.log('Restaurant data saved successfully');
+      } else {
+        // Save user data for track athletes
+        await setDoc(doc(db, 'users', user.uid), {
+          uid: user.uid,
+          name: form.name,
+          contactMethod: mode,
+          email: mode === 'email' ? form.email : null,
+          phone: mode === 'phone' ? form.phone : null,
+          bio: '',
+          profilePictureUrl: profilePictureUrl,
+          isBusiness: false,
+          followersCount: 0,
+          followingCount: 0,
+          followerUids: [],
+          followingUids: [],
+          emailNotifications: notifEmail,
+          textNotifications: notifText,
+          totalWorkouts: 0,
+          personalRecords: 0,
+          createdAt: Timestamp.now(),
+        });
+      }
+      
+      console.log('Signup successful, navigating to home...');
+      console.log('User UID:', user.uid);
+      console.log('Current auth state:', auth.currentUser);
+      console.log('User email verified:', user.emailVerified);
+      
+      // Email verification disabled for now
+      console.log('Email verification disabled - proceeding with signup');
+      
+      // Ensure we're not loading anymore before navigation
+      setLoading(false);
+      
+      // Force a refresh of the auth state to ensure it's up to date
+      await auth.updateCurrentUser(user);
+      console.log('Updated current user, auth state should now reflect the new user');
+      
+      // Try to sign in the user to ensure they're properly authenticated
+      console.log('Signing in user to ensure authentication...');
+      try {
+        if (mode === 'email') {
+          await signInWithEmailAndPassword(auth, form.email, form.password);
+        } else if (mode === 'phone') {
+          const phoneEmail = `${form.phone}@phone.stryde.com`;
+          await signInWithEmailAndPassword(auth, phoneEmail, form.password);
+        }
+        console.log('User signed in successfully');
+      } catch (signInError) {
+        console.error('Error signing in user:', signInError);
+      }
+      
+      // Check if user is now authenticated
+      const currentUser = auth.currentUser;
+      console.log('After sign in - Current auth state:', currentUser);
+      console.log('User is authenticated:', !!currentUser);
+      
+      if (currentUser) {
+        console.log('User is authenticated, navigating to home...');
+        // Try to navigate directly since user is authenticated
+        try {
+          router.replace('/authenticated_tabs/home');
+        } catch (error) {
+          console.log('Direct navigation failed, falling back to auth state listener');
+        }
+      } else {
+        console.log('User not authenticated yet, waiting for auth state change...');
+      }
+    } catch (err: any) {
+      console.error('Signup error:', err);
+      setError(getFriendlyErrorMessage(err.code));
+    setLoading(false);
+    }
+  };
+
+  const dismissKeyboard = () => {
+    setIsKeyboardDismissing(true);
+    Keyboard.dismiss();
+    setTimeout(() => {
+      setIsKeyboardDismissing(false);
+    }, 300);
+  };
+
+  const handleLoginPress = () => {
+    router.push('../unauthenticated_tabs/login');
+  };
+
+  const handleTermsPress = () => {
+    Linking.openURL('https://www.punchrewards.app/terms-of-service');
+  };
+
+  const handlePrivacyPress = () => {
+    Linking.openURL('https://www.punchrewards.app/privacy-policy');
+  };
+
+  return (
+    <KeyboardAvoidingView
+      style={{ flex: 1 }}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
+    >
+      <View style={{ flex: 1, backgroundColor: '#FFFFFF' }}>
+        <SignupBackground
+          height={safeHeight}
+          logoSizeAnim={logoSizeAnim}
+          orangeBackgroundAnim={orangeBackgroundAnim}
+          onBackPress={handleBack}
+        />
+        
+          {/* Signup Form Modal */}
+        {(
+          <TouchableWithoutFeedback onPress={dismissKeyboard}>
+            <Animated.View style={{
+              position: 'absolute',
+              left: 0,
+              right: 0,
+              bottom: -50,
+              width: '100%',
+              zIndex: 10,
+              height: '85%',
+              backgroundColor: 'transparent',
+              justifyContent: 'flex-start',
+              alignSelf: 'center',
+              shadowColor: '#000',
+              shadowOffset: { width: 0, height: -8 },
+              shadowOpacity: 0.3,
+              shadowRadius: 16,
+              elevation: 12,
+            }}>
+              <View style={{
+                  borderTopLeftRadius: 32,
+                  borderTopRightRadius: 32,
+                  borderBottomLeftRadius: 0,
+                  borderBottomRightRadius: 0,
+                  paddingHorizontal: 32,
+                  paddingTop: 32,
+                  paddingBottom: 32,
+                  flex: 1,
+                  shadowColor: '#000',
+                  shadowOffset: { width: 0, height: -15 },
+                  shadowOpacity: 0.5,
+                  shadowRadius: 25,
+                  elevation: 25,
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  width: '100%',
+                  overflow: 'hidden',
+                  backgroundColor: '#FFFFFF',
+              }}>
+                <SignupForm
+                  current={current}
+                  step={step}
+                  steps={steps}
+                  form={form}
+                  setForm={setForm}
+                  setError={setError}
+                  loading={loading}
+                  uploadingPicture={uploadingPicture}
+                  showPassword={showPassword}
+                  setShowPassword={setShowPassword}
+                  agree={agree}
+                  setAgree={setAgree}
+                  notifEmail={notifEmail}
+                  setNotifEmail={setNotifEmail}
+                  notifText={notifText}
+                  setNotifText={setNotifText}
+                  mode={mode}
+                  setMode={setMode}
+                  phoneExists={phoneExists}
+                  isValidating={isValidating}
+                  showMoreCuisine={showMoreCuisine}
+                  setShowMoreCuisine={setShowMoreCuisine}
+                  cuisineOptions={cuisineOptions}
+                  showLoadingScreen={showLoadingScreen}
+                  loadingMessage={loadingMessage}
+                  pulsateAnim={pulsateAnim}
+                  onLogoPick={handleLogoPick}
+                  onBusinessPicturePick={handleBusinessPicturePick}
+                  onRemoveLogo={() => setForm({ ...form, logo: null })}
+                  formatPhoneNumber={formatPhoneNumber}
+                />
+
+                {/* Error message */}
+                {error ? (
+                  <View style={loginStyles.errorContainer}>
+                    <CustomText variant="body" weight="medium" fontFamily="figtree" style={loginStyles.errorText}>
+                      {error}
+                    </CustomText>
+                  </View>
+                ) : null}
+
+                {/* Navigation buttons */}
+                <SignupNavigation
+                  current={current}
+                  step={step}
+                  steps={steps}
+                  loading={loading}
+                  form={form}
+                  agree={agree}
+                  showLoadingScreen={showLoadingScreen}
+                  onNext={handleNext}
+                  onBack={handleBack}
+                  onSignup={handleSignup}
+                  onStartLoadingSequence={startLoadingSequence}
+                />
+
+                {/* Login link */}
+                {!showLoadingScreen && (
+                  <View style={{ marginTop: 20, alignItems: 'center' }}>
+                    <TouchableOpacity onPress={handleLoginPress}>
+                      <CustomText variant="body" weight="medium" fontFamily="figtree" style={{ color: '#FB7A20', fontSize: 16 }}>
+                        Already have an account? <CustomText variant="body" weight="bold" fontFamily="figtree" style={{ color: '#FB7A20' }}>Login</CustomText>
+                      </CustomText>
+                    </TouchableOpacity>
+                  </View>
+                )}
+                      </View>
+            </Animated.View>
+          </TouchableWithoutFeedback>
+        )}
+    </View>
+  </KeyboardAvoidingView>
+  );
+}
+
+ 

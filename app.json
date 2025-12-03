@@ -1,0 +1,98 @@
+{
+  "expo": {
+    "name": "Stryde",
+    "slug": "stryde",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "scheme": "stryde",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "plugins": [
+      "expo-router",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/images/splash-icon.png",
+          "imageWidth": 200,
+          "resizeMode": "contain",
+          "backgroundColor": "#ffffff"
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "Allow Stryde to use your location to track workouts and performance."
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true
+    },
+    "extra": {
+      "router": {
+        "origin": false
+      },
+      "eas": {
+        "projectId": "0d2a3762-6d85-49da-86c5-37ce01b7e0af"
+      }
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.punchrewards.stryde",
+      "associatedDomains": [
+        "applinks:stryde.app",
+        "applinks:www.stryde.app"
+      ],
+      "infoPlist": {
+        "NFCReaderUsageDescription": "This app uses NFC for workout tracking and data sync.",
+        "NSNearbyInteractionUsageDescription": "This app uses nearby interaction for workout features.",
+        "NSBluetoothAlwaysUsageDescription": "This app uses Bluetooth to connect with fitness trackers and devices.",
+        "NSBluetoothPeripheralUsageDescription": "This app uses Bluetooth to connect with fitness trackers and devices.",
+        "NSHealthShareUsageDescription": "This app needs access to your health data to sync workouts and performance metrics from your Apple Watch.",
+        "NSHealthUpdateUsageDescription": "This app needs permission to save workout data to HealthKit."
+      },
+      "entitlements": {
+        "com.apple.developer.nfc.readersession.formats": ["NDEF"],
+        "com.apple.developer.healthkit": true,
+        "com.apple.developer.healthkit.access": ["health-records"]
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/images/adaptive-icon.png",
+        "backgroundColor": "#ffffff"
+      },
+      "edgeToEdgeEnabled": true,
+      "package": "com.stryde.stryde",
+      "permissions": [
+        "android.permission.BLUETOOTH",
+        "android.permission.BLUETOOTH_ADMIN",
+        "android.permission.BLUETOOTH_CONNECT",
+        "android.permission.BLUETOOTH_SCAN",
+        "android.permission.ACCESS_FINE_LOCATION"
+      ],
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "data": [
+            { "scheme": "https", "host": "stryde.app" },
+            { "scheme": "https", "host": "www.stryde.app" }
+          ],
+          "category": ["BROWSABLE", "DEFAULT"]
+        }
+      ],
+      "config": {
+        "googleMaps": {
+          "apiKey": "YOUR_GOOGLE_MAPS_API_KEY_HERE"
+        }
+      }
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "static",
+      "favicon": "./assets/images/favicon.png"
+    }
+  }
+}
